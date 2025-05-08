@@ -1,0 +1,172 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>球員成績表</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #searchInput {
+      margin-bottom: 10px;
+      padding: 8px;
+      width: 200px;
+      font-size: 16px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    th {
+      background-color: #f2f2f2;
+      cursor: pointer;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    td:first-child, td:nth-child(2),
+    th:first-child, th:nth-child(2) {
+      position: sticky;
+      left: 0;
+      background: #fff;
+      z-index: 1;
+    }
+    td:nth-child(2), th:nth-child(2) {
+      left: 60px;
+    }
+    tfoot td {
+      background-color: #f9f9f9;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>球員成績表（自動連接 Google Sheet）</h1>
+  <input type="text" id="searchInput" placeholder="輸入背號或姓名搜尋">
+  <table id="statsTable"></table>
+
+  <script>
+    const csvUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSnY8iPeGXAqK-DTaPn787s_34iMUccdn6BF5Kf5em5Zw1T5HryL99jgT2uuYax_Q/pub?output=csv';
+
+    Papa.parse(csvUrl, {
+      download: true,
+      header: true,
+      complete: function(results) {
+        let data = results.data.filter(row => row["姓名"] && row["打數"]);  // 移除空行
+
+        // 計算 OPS（上壘率 + 長打率）
+        data.forEach(row => {
+          const obp = parseFloat(row["上壘率"]) || 0;
+          const slg = parseFloat(row["長打率"]) || 0;
+          row["OPS"] = (obp + slg).toFixed(3);
+        });
+
+        // 建立表格
+        const table = document.getElementById("statsTable");
+
+        const headers = Object.keys(data[0]);
+        headers.push("OPS");
+
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        headers.forEach((key, index) => {
+          const th = document.createElement("th");
+          th.textContent = key;
+          th.addEventListener("click", () => sortTable(index));
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        data.forEach(row => {
+          const tr = document.createElement("tr");
+          headers.forEach(key => {
+            const td = document.createElement("td");
+            td.textContent = row[key] || "";
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        // 增加平均列
+        const tfoot = document.createElement("tfoot");
+        const avgRow = document.createElement("tr");
+        headers.forEach((key, colIndex) => {
+          const td = document.createElement("td");
+          if (colIndex === 0) td.textContent = "平均";
+          else if (colIndex === 1) td.textContent = "";
+          else {
+            const values = data.map(r => parseFloat(r[key])).filter(v => !isNaN(v));
+            if (values.length > 0) {
+              const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(3);
+              td.textContent = avg;
+            } else {
+              td.textContent = "";
+            }
+          }
+          avgRow.appendChild(td);
+        });
+        tfoot.appendChild(avgRow);
+        table.appendChild(tfoot);
+
+        // 搜尋功能
+        document.getElementById("searchInput").addEventListener("input", function () {
+          const val = this.value.trim().toLowerCase();
+          Array.from(tbody.rows).forEach(row => {
+            const id = row.cells[0].textContent.toLowerCase();
+            const name = row.cells[1].textContent.toLowerCase();
+            row.style.display = id.includes(val) || name.includes(val) ? "" : "none";
+          });
+        });
+
+        // 排序功能
+        function sortTable(n) {
+          let switching = true;
+          let shouldSwitch;
+          let dir = "asc";
+          let switchcount = 0;
+          while (switching) {
+            switching = false;
+            let rows = tbody.rows;
+            for (let i = 0; i < rows.length - 1; i++) {
+              shouldSwitch = false;
+              let x = rows[i].cells[n].textContent;
+              let y = rows[i + 1].cells[n].textContent;
+              let xVal = parseFloat(x);
+              let yVal = parseFloat(y);
+              if (isNaN(xVal) || isNaN(yVal)) {
+                xVal = x.toLowerCase();
+                yVal = y.toLowerCase();
+              }
+              if ((dir === "asc" && xVal > yVal) || (dir === "desc" && xVal < yVal)) {
+                shouldSwitch = true;
+                break;
+              }
+            }
+            if (shouldSwitch) {
+              tbody.insertBefore(rows[i + 1], rows[i]);
+              switching = true;
+              switchcount++;
+            } else {
+              if (switchcount === 0 && dir === "asc") {
+                dir = "desc";
+                switching = true;
+              }
+            }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
