@@ -1,0 +1,277 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>棒球比賽統計</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://unpkg.com/papaparse@latest/papaparse.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
+    .container { max-width: 1400px; margin: auto; }
+    .search-bar { margin-bottom: 20px; }
+    .search-bar input { padding: 8px; width: 200px; margin-right: 10px; }
+    table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    th, td { padding: 10px; text-align: center; border: 1px solid #ddd; }
+    th { background: #4CAF50; color: white; cursor: pointer; position: sticky; top: 0; z-index: 10; }
+    th:hover { background: #45a049; }
+    .fixed-col { position: sticky; left: 0; background: #f8f8f8; z-index: 5; }
+    .fixed-col-header { position: sticky; left: 0; background: #4CAF50; z-index: 15; }
+    .highlight { background-color: #d4edda; }
+    .sort-icon { margin-left: 5px; }
+    .table-container { overflow-x: auto; max-height: 600px; }
+    .loading { text-align: center; padding: 20px; }
+    .error { text-align: center; padding: 20px; color: red; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // Defining the main React component
+    function BaseballStats() {
+      const [data, setData] = React.useState([]);
+      const [search, setSearch] = React.useState('');
+      const [sortConfig, setSortConfig] = React.useState({ key: null, direction: 'asc' });
+      const [loading, setLoading] = React.useState(true);
+      const [error, setError] = React.useState(null);
+      const [maxValues, setMaxValues] = React.useState({});
+
+      // Fetching and parsing CSV data from Google Sheets
+      React.useEffect(() => {
+        const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQltivRfnLpZ31pQaugHsIJWHlDqdkks4qRriATwyig2G1XZfjcszSjYrWYkpEbBlsFYZFi_9s2FLhu/pub?output=csv";
+        
+        fetch(csvUrl)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error('無法加載CSV數據');
+            }
+            return response.text();
+          })
+          .then(csvText => {
+            Papa.parse(csvText, {
+              header: true,
+              skipEmptyLines: true,
+              transform: (value, header) => {
+                let cleaned = value.trim().replace(/^"|"$/g, '');
+                if (['安打數', '打數', '打點', '一壘安打', '二壘安打', '三壘安打', '全壘打', '三振', '四壞球'].includes(header)) {
+                  return cleaned === '' ? 0 : parseInt(cleaned, 10);
+                }
+                if (['打擊率', '上壘率', '長打率'].includes(header)) {
+                  return cleaned === '' ? 0 : parseFloat(cleaned);
+                }
+                return cleaned;
+              },
+              complete: (results) => {
+                const players = results.data.filter(row => row['姓名'] !== '').map(row => ({
+                  ...row,
+                  OPS: (row['上壘率'] + row['長打率']).toFixed(3)
+                }));
+                const averages = calculateAverages(players);
+                const maxValues = calculateMaxValues(players);
+                setMaxValues(maxValues);
+                setData([...players, { 背號: '平均', 姓名: '', ...averages }]);
+                setLoading(false);
+              },
+              error: (err) => {
+                setError('解析CSV數據時發生錯誤');
+                setLoading(false);
+                console.error(err);
+              }
+            });
+          })
+          .catch(err => {
+            setError('無法加載CSV數據');
+            setLoading(false);
+            console.error(err);
+          });
+      }, []);
+
+      // Calculating maximum values for each column
+      const calculateMaxValues = (players) => {
+        return players.reduce((acc, row) => {
+          ['安打數', '打數', '打擊率', '打點', '一壘安打', '二壘安打', '三壘安打', '全壘打', '三振', '四壞球', '上壘率', '長打率', 'OPS'].forEach(header => {
+            const value = parseFloat(row[header]) || 0;
+            acc[header] = Math.max(acc[header] || 0, value);
+          });
+          return acc;
+        }, {});
+      };
+
+      // Calculating averages for each column
+      const calculateAverages = (players) => {
+        const totals = players.reduce((acc, row) => {
+          acc['安打數'] = (acc['安打數'] || 0) + (row['安打數'] || 0);
+          acc['打數'] = (acc['打數'] || 0) + (row['打數'] || 0);
+          acc['打點'] = (acc['打點'] || 0) + (row['打點'] || 0);
+          acc['一壘安打'] = (acc['一壘安打'] || 0) + (row['一壘安打'] || 0);
+          acc['二壘安打'] = (acc['二壘安打'] || 0) + (row['二壘安打'] || 0);
+          acc['三壘安打'] = (acc['三壘安打'] || 0) + (row['三壘安打'] || 0);
+          acc['全壘打'] = (acc['全壘打'] || 0) + (row['全壘打'] || 0);
+          acc['三振'] = (acc['三振'] || 0) + (row['三振'] || 0);
+          acc['四壞球'] = (acc['四壞球'] || 0) + (row['四壞球'] || 0);
+          acc['打擊率'] = (acc['打擊率'] || 0) + (row['打擊率'] || 0);
+          acc['上壘率'] = (acc['上壘率'] || 0) + (row['上壘率'] || 0);
+          acc['長打率'] = (acc['長打率'] || 0) + (row['長打率'] || 0);
+          acc['OPS'] = (acc['OPS'] || 0) + (parseFloat(row['OPS']) || 0);
+          return acc;
+        }, {});
+        const count = players.length;
+        return {
+          安打數: (totals['安打數'] / count).toFixed(2),
+          打數: (totals['打數'] / count).toFixed(2),
+          打擊率: (totals['打擊率'] / count).toFixed(3),
+          打點: (totals['打點'] / count).toFixed(2),
+          一壘安打: (totals['一壘安打'] / count).toFixed(2),
+          二壘安打: (totals['二壘安打'] / count).toFixed(2),
+          三壘安打: (totals['三壘安打'] / count).toFixed(2),
+          全壘打: (totals['全壘打'] / count).toFixed(2),
+          三振: (totals['三振'] / count).toFixed(2),
+          四壞球: (totals['四壞球'] / count).toFixed(2),
+          上壘率: (totals['上壘率'] / count).toFixed(3),
+          長打率: (totals['長打率'] / count).toFixed(3),
+          OPS: (totals['OPS'] / count).toFixed(3)
+        };
+      };
+
+      // Handling sorting
+      const handleSort = (key) => {
+        let direction = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+          direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+      };
+
+      // Filtering and sorting data
+      const filteredData = data.filter(row =>
+        (row['姓名']?.toLowerCase().includes(search.toLowerCase()) ||
+         row['背號']?.toString().includes(search))
+      );
+
+      const sortedData = [...filteredData].sort((a, b) => {
+        if (sortConfig.key) {
+          const aValue = a[sortConfig.key] || 0;
+          const bValue = b[sortConfig.key] || 0;
+          if (sortConfig.direction === 'asc') {
+            return aValue > bValue ? 1 : -1;
+          } else {
+            return aValue < bValue ? 1 : -1;
+          }
+        }
+        return 0;
+      });
+
+      // Defining table headers
+      const headers = [
+        '背號', '姓名', '安打數', '打數', '打擊率', '打點', '一壘安打', '二壘安打',
+        '三壘安打', '全壘打', '三振', '四壞球', '上壘率', '長打率', 'OPS'
+      ];
+
+      // Rendering the component
+      return (
+        <div className="container">
+          {loading && <div className="loading">正在加載數據...</div>}
+          {error && <div className="error">{error}</div>}
+          {!loading && !error && (
+            <>
+              <div className="search-bar">
+                <input
+                  type="text"
+                  placeholder="輸入姓名或背號搜尋"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      {headers.map((header, index) => (
+                        <th
+                          key={header}
+                          onClick={() => handleSort(header)}
+                          className={index < 2 ? 'fixed-col-header' : ''}
+                        >
+                          {header}
+                          {sortConfig.key === header && (
+                            <span className="sort-icon">
+                              {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedData.map((row, index) => (
+                      <tr key={index}>
+                        {headers.map((header, i) => (
+                          <td
+                            key={`${index}-${header}`}
+                            className={`${i < 2 ? 'fixed-col' : ''} ${
+                              row[header] && parseFloat(row[header]) === maxValues[header] && row['姓名'] ? 'highlight' : ''
+                            }`}
+                          >
+                            {typeof row[header] === 'number' && (header.includes('率') || header === 'OPS')
+                              ? row[header].toFixed(3)
+                              : row[header]}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // Rendering the React app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<BaseballStats />);
+  </script>
+</body>
+</html>
