@@ -7,8 +7,22 @@ window.SBViews.games = function (season) {
 
   frag.appendChild(el('div', { class: 'page-head' }, [
     el('h1', { text: '比賽紀錄' }),
-    el('p', { text: season.games.length + ' 場比賽 · 點任一場看單場成績表' })
+    el('p', { text: season.games.length
+      ? season.games.length + ' 場比賽 · 點任一場看單場成績表'
+      : '還沒有任何比賽紀錄' })
   ]));
+
+  if (!season.games.length) {
+    frag.appendChild(U.card(null, null, el('div', { class: 'empty' }, [
+      el('p', { text: '目前的資料來源沒有逐場紀錄。' }),
+      el('p', { class: 'note' }, [
+        '從下一場比賽開始用 ',
+        el('a', { href: '#/record' }, '「記錄」頁'),
+        ' 逐打席輸入，這裡就會出現比賽列表、單場成績表與逐局紀錄。'
+      ])
+    ])));
+    return frag;
+  }
 
   const rec = season.record;
   frag.appendChild(U.tiles([

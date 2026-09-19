@@ -6,14 +6,31 @@ window.SBViews.overview = function (season) {
   const t = season.team;
   const rec = season.record;
 
+  const totalsMode = season.granularity === 'totals';
+  const qualifyLabel = totalsMode ? '規定打數' : '規定打席';
+
   frag.appendChild(el('div', { class: 'page-head' }, [
     el('h1', { text: season.cfg.teamName + '　' + season.cfg.seasonName + '打擊成績' }),
-    el('p', { text: rec.played + ' 場出賽 · ' + t.PA + ' 個打席 · 規定打席 ' + season.minPA + ' 以上列入率值排名' })
+    el('p', {
+      text: (totalsMode
+              ? season.rows.length + ' 位球員 · ' + t.AB + ' 個打數'
+              : rec.played + ' 場出賽 · ' + t.PA + ' 個打席')
+            + ' · ' + qualifyLabel + ' ' + season.minPA + ' 以上列入率值排名'
+    })
   ]));
 
   /* ----------------------------------------------------- 戰績與團隊成績 */
 
-  frag.appendChild(U.tiles([
+  frag.appendChild(U.tiles(totalsMode ? [
+    { label: '團隊打擊率', value: S.fmtRate3(t.AVG), hero: true, note: t.H + ' 安打 / ' + t.AB + ' 打數' },
+    { label: '團隊長打率', value: S.fmtRate3(t.SLG), note: t.TB + ' 壘打數' },
+    { label: '安打', value: S.fmtInt(t.H), note: '長打 ' + t.XBH + ' 支' },
+    { label: '全壘打', value: S.fmtInt(t.HR), note: '三壘安打 ' + t['3B'] + ' · 二壘安打 ' + t['2B'] },
+    { label: '打點', value: S.fmtInt(t.RBI) },
+    { label: '三振 / 四壞', value: t.K + ' / ' + t.BB },
+    { label: '出賽球員', value: S.fmtInt(season.rows.length), note: '打數 ' + season.minPA + ' 以上 ' +
+        season.rows.filter(r => r.stats.AB >= season.minPA).length + ' 人' }
+  ] : [
     { label: '戰績（勝-敗-和）', value: rec.W + '-' + rec.L + '-' + rec.T, hero: true,
       note: rec.winPct === null ? '尚無勝負' : '勝率 ' + S.fmtRate3(rec.winPct) },
     { label: '得分 / 失分', value: rec.runsFor + ' / ' + rec.runsAgainst,
@@ -36,13 +53,13 @@ window.SBViews.overview = function (season) {
     { key: 'H', label: '安打', format: S.fmtInt, qualified: false },
     { key: 'RBI', label: '打點', format: S.fmtInt, qualified: false }
   ].map(cat => {
-    const top = S.rank(season.rows, cat.key, { minPA: minPA, limit: 5 });
+    const top = S.rank(season.rows, cat.key, { minPA: minPA, qualifyKey: season.qualifyKey, limit: 5 });
     const body = top.length
       ? C.leaderBars(top.map(r => ({
           rank: r.rank, value: r.stats[cat.key], link: U.playerLink(r.player)
         })), cat.format)
       : U.empty('尚無符合條件的球員');
-    return U.card(cat.label + '　前 5 名', cat.qualified ? '規定打席 ' + minPA + ' 以上' : '全隊', body);
+    return U.card(cat.label + '　前 5 名', cat.qualified ? qualifyLabel + ' ' + minPA + ' 以上' : '全隊', body);
   });
   frag.appendChild(el('div', { class: 'grid grid--3' }, leaderCards));
 
@@ -75,33 +92,36 @@ window.SBViews.overview = function (season) {
     const g = S.OUTCOMES[code].group;
     return g === 'safe' ? '安打' : g === 'on' ? '上壘' : '出局・犧牲';
   };
+  const denom = totalsMode ? t.AB : t.PA;
   const distItems = Object.keys(S.OUTCOMES)
     .filter(code => season.distribution[code] > 0)
     .map(code => ({
       label: S.OUTCOMES[code].label,
       value: season.distribution[code],
       group: groupOf(code),
-      sub: S.fmtPct1(season.distribution[code] / t.PA) + ' 的打席'
+      sub: denom > 0 ? S.fmtPct1(season.distribution[code] / denom) + (totalsMode ? ' 的打數' : ' 的打席') : ''
     }))
     .sort((a, b) => b.value - a.value);
 
   const distCard = U.card(
-    '打席結果分佈',
-    t.PA + ' 個打席',
+    totalsMode ? '安打組成與三振四壞' : '打席結果分佈',
+    totalsMode ? t.AB + ' 個打數' : t.PA + ' 個打席',
     C.barChart({
       items: distItems,
       groups: GROUPS,
       format: S.fmtInt,
       valueLabel: '次數',
-      label: '各種打席結果出現次數'
+      label: totalsMode ? '安打組成與三振四壞次數' : '各種打席結果出現次數'
     })
   );
 
-  frag.appendChild(el('div', { class: 'grid grid--2' }, [trendCard, distCard]));
+  frag.appendChild(totalsMode
+    ? el('div', {}, distCard)
+    : el('div', { class: 'grid grid--2' }, [trendCard, distCard]));
 
   /* -------------------------------------------------------- 最近比賽 */
 
-  const recent = season.byGame.slice(-5).reverse();
+  const recent = totalsMode ? [] : season.byGame.slice(-5).reverse();
   if (recent.length) {
     frag.appendChild(U.card('最近比賽', null, U.table({
       sticky: 1,

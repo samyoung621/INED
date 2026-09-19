@@ -11,6 +11,26 @@ window.SBData = (function () {
   /* --------------------------------------------------- 欄位別名對應 */
 
   const FIELDS = {
+    // 球季累計成績表（每位球員一列，已經加總好的數字）
+    totals: {
+      number: ['背號', '號碼', '球衣號碼', 'Number', 'No', '#'],
+      photo:  ['照片', '相片', '圖片', 'Photo', 'Image'],
+      name:   ['姓名', '球員', '名字', 'Name', 'Player'],
+      H:      ['安打數', '安打', 'H', 'Hits'],
+      AB:     ['打數', 'AB'],
+      AVG:    ['打擊率', 'AVG', 'BA'],
+      RBI:    ['打點', 'RBI'],
+      '1B':   ['一壘安打', '一安', '1B'],
+      '2B':   ['二壘安打', '二安', '2B'],
+      '3B':   ['三壘安打', '三安', '3B'],
+      HR:     ['全壘打', '全打', '本壘打', 'HR'],
+      K:      ['三振', '被三振', 'K', 'SO'],
+      BB:     ['四壞球', '四壞', '保送', 'BB'],
+      OBP:    ['上壘率', 'OBP'],
+      SLG:    ['長打率', 'SLG'],
+      position: ['守備位置', '守位', '位置', 'Position'],
+      status: ['狀態', 'Status']
+    },
     players: {
       id:       ['背號', '號碼', '球衣號碼', 'Number', 'No', '#'],
       name:     ['姓名', '球員', '名字', 'Name', 'Player'],
@@ -62,12 +82,30 @@ window.SBData = (function () {
   /* --------------------------------------------------------- 取得來源 */
 
   function gvizUrl(sheetId, tab) {
-    return 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(sheetId) +
-           '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(tab);
+    const base = 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(sheetId) + '/gviz/tq?tqx=out:csv';
+    // 沒指定分頁名稱就讀第一個分頁
+    return (tab || '').trim() ? base + '&sheet=' + encodeURIComponent(tab.trim()) : base;
   }
 
-  /** 回傳三個表各自的來源網址，以及這次用的是哪種模式。 */
+  /** 回傳各表的來源網址，以及這次用的是哪種模式。 */
   function resolveSources(cfg) {
+    // 球季累計成績：只有一張表
+    if (cfg.mode === 'totals') {
+      const explicitUrl = (cfg.csvUrls.totals || '').trim();
+      if (explicitUrl) {
+        return { mode: 'totals', urls: { totals: explicitUrl }, label: '已發佈的累計成績 CSV' };
+      }
+      const id = (cfg.sheetId || '').trim();
+      if (id) {
+        return {
+          mode: 'totals',
+          urls: { totals: gvizUrl(id, cfg.tabs.totals) },
+          label: 'Google Sheet 累計成績'
+        };
+      }
+      return { mode: 'totals', urls: { totals: 'data/totals.csv' }, label: '本機累計成績快照', local: true };
+    }
+
     const keys = ['players', 'games', 'atbats'];
     const explicit = keys.filter(k => (cfg.csvUrls[k] || '').trim());
 
@@ -286,6 +324,8 @@ window.SBData = (function () {
 
     return {
       cfg: cfg,
+      granularity: 'atbats',
+      qualifyKey: 'PA',
       players: players,
       games: games,
       gameById: gameById,
@@ -302,32 +342,126 @@ window.SBData = (function () {
     };
   }
 
+  /**
+   * 由「球季累計成績」表組出整季資料。
+   *
+   * 這種來源沒有逐場與逐打席紀錄，所以 games / atbats 是空的，
+   * 需要那些資料的頁面會自己顯示說明，而不是畫出空圖表。
+   */
+  function buildSeasonFromTotals(cfg, raw) {
+    const F = FIELDS.totals;
+    const rows = [];
+    const warnings = [];
+    const nameSeen = new Map();
+
+    raw.totals.data.forEach((row, i) => {
+      const name = pick(row, F.name);
+      if (!name) return;
+      // 有些表最後會有 Total / 合計 列，那不是球員
+      if (/^(total|totals|合計|總計|小計)$/i.test(name) ||
+          /^(total|totals|合計|總計|小計)$/i.test(pick(row, F.number))) return;
+
+      const number = pick(row, F.number);
+      // 背號可能重複（0 號好幾個人），所以用姓名當識別碼
+      if (nameSeen.has(name)) {
+        warnings.push('球員姓名重複：' + name + '，後面那筆會蓋掉前面的');
+      }
+      nameSeen.set(name, true);
+
+      const status = pick(row, F.status);
+      const player = {
+        id: name,
+        number: number,
+        name: name,
+        photo: pick(row, F.photo),
+        position: pick(row, F.position),
+        hand: '',
+        status: status || '在隊',
+        active: !/離隊|退隊|inactive|no/i.test(status),
+        order: i
+      };
+
+      const stats = S.deriveFromTotals({
+        AB: pick(row, F.AB), H: pick(row, F.H),
+        '1B': pick(row, F['1B']), '2B': pick(row, F['2B']),
+        '3B': pick(row, F['3B']), HR: pick(row, F.HR),
+        BB: pick(row, F.BB), K: pick(row, F.K), RBI: pick(row, F.RBI),
+        AVG: pick(row, F.AVG), OBP: pick(row, F.OBP), SLG: pick(row, F.SLG)
+      });
+
+      // 表上的安打數跟一二三壘安打加起來對不上的話要講
+      const parts = stats['1B'] + stats['2B'] + stats['3B'] + stats.HR;
+      if (stats.H !== parts) {
+        warnings.push(name + ' 的安打數（' + stats.H + '）與一二三壘安打＋全壘打的合計（' + parts + '）對不上');
+      }
+
+      rows.push({ player: player, atbats: [], stats: stats, recent: null, progression: [] });
+    });
+
+    const team = S.sumTotals(rows.map(r => r.stats));
+    const distribution = {
+      '1B': team['1B'], '2B': team['2B'], '3B': team['3B'], HR: team.HR,
+      BB: team.BB, K: team.K
+    };
+
+    return {
+      cfg: cfg,
+      granularity: 'totals',
+      players: rows.map(r => r.player),
+      games: [],
+      gameById: new Map(),
+      gameOrder: [],
+      atbats: [],
+      rows: rows,
+      rowByPlayer: new Map(rows.map(r => [String(r.player.id), r])),
+      byGame: [],
+      team: team,
+      record: { games: 0, played: 0, W: 0, L: 0, T: 0, runsFor: 0, runsAgainst: 0, winPct: null },
+      distribution: distribution,
+      qualifyKey: 'AB',
+      minPA: Math.max(1, parseInt(cfg.qualifyingAB, 10) || 20),
+      warnings: warnings
+    };
+  }
+
   /** 載入資料。Sheet 讀不到時自動退回示範資料，並回報原因。 */
   function load() {
     const cfg = window.SBConfig.load();
     const primary = resolveSources(cfg);
 
-    const fetchAll = src => Promise.all([
-      fetchCsv(src.urls.players), fetchCsv(src.urls.games), fetchCsv(src.urls.atbats)
-    ]).then(([players, games, atbats]) => ({ players, games, atbats }));
+    function fetchAll(src) {
+      if (src.mode === 'totals') {
+        return fetchCsv(src.urls.totals).then(totals => ({ totals: totals }));
+      }
+      return Promise.all([
+        fetchCsv(src.urls.players), fetchCsv(src.urls.games), fetchCsv(src.urls.atbats)
+      ]).then(([players, games, atbats]) => ({ players, games, atbats }));
+    }
+
+    function assemble(src, raw) {
+      const season = src.mode === 'totals' ? buildSeasonFromTotals(cfg, raw) : buildSeason(cfg, raw);
+      season.source = src;
+      return season;
+    }
 
     return fetchAll(primary)
-      .then(raw => {
-        const season = buildSeason(cfg, raw);
-        season.source = primary;
-        return season;
-      })
+      .then(raw => assemble(primary, raw))
       .catch(err => {
-        if (primary.mode === 'demo') throw err;
-        const fallback = resolveSources(Object.assign({}, cfg, { mode: 'demo', sheetId: '', csvUrls: { players: '', games: '', atbats: '' } }));
+        // 讀不到線上資料時退回專案內的快照，讓網站至少有東西可看
+        const fallback = primary.mode === 'totals'
+          ? { mode: 'totals', urls: { totals: 'data/totals.csv' }, label: '本機累計成績快照', local: true }
+          : resolveSources(Object.assign({}, cfg, {
+              mode: 'demo', sheetId: '', csvUrls: { players: '', games: '', atbats: '' }
+            }));
+        if (primary.local || (primary.mode === 'demo')) throw err;
         return fetchAll(fallback).then(raw => {
-          const season = buildSeason(cfg, raw);
-          season.source = fallback;
-          season.loadError = '讀取 Google Sheet 失敗（' + err.message + '），暫時顯示示範資料。';
+          const season = assemble(fallback, raw);
+          season.loadError = '讀取 Google Sheet 失敗（' + err.message + '），改用專案內的快照資料。';
           return season;
         });
       });
   }
 
-  return { load, buildSeason, resolveSources, gvizUrl, FIELDS, normalizePlayers, normalizeGames, normalizeAtbats };
+  return { load, buildSeason, buildSeasonFromTotals, resolveSources, gvizUrl, FIELDS,
+           normalizePlayers, normalizeGames, normalizeAtbats };
 })();

@@ -190,6 +190,25 @@ a:hover { text-decoration: underline; }
 main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 64px; }
 
 .page-head { margin: 4px 0 18px; }
+.player-head { display: flex; align-items: center; gap: 14px; }
+.player-photo {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.player-thumb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface-2);
+  vertical-align: middle;
+  margin-right: 7px;
+}
 .page-head h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
 .page-head p { margin: 0; color: var(--text-secondary); font-size: 14px; }
 

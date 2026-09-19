@@ -8,21 +8,27 @@ window.SBConfig = (function () {
     teamName: 'INED 壘球隊',
     seasonName: '2026 春季',
 
-    // 'demo' = 用 data/ 底下的示範 CSV；'sheet' = 讀 Google Sheet
-    mode: 'demo',
+    // 資料來源模式：
+    //   'totals' = 球季累計成績（每位球員一列，就是現在這份 Sheet 的格式）
+    //   'sheet'  = 逐打席三分頁（球員 / 比賽 / 打席），功能最完整
+    //   'demo'   = data/ 底下的示範資料
+    mode: 'totals',
 
     // Google Sheet 的 ID（網址 /spreadsheets/d/<這一段>/edit）。
-    // 該 Sheet 的共用權限需設為「知道連結的任何人 → 檢視者」。
-    sheetId: '',
+    // 該 Sheet 的共用權限需設為「知道連結的任何人 → 檢視者」，瀏覽器才讀得到。
+    sheetId: '13ZRWxv4aLHLzmSzYEgVttZJIyn3ztmO1g-hL3jfXeNg',
 
-    // 三個工作表的名稱
-    tabs: { players: '球員', games: '比賽', atbats: '打席' },
+    // 工作表名稱。totals 留空代表讀第一個分頁
+    tabs: { totals: '', players: '球員', games: '比賽', atbats: '打席' },
 
-    // 若你用「檔案 → 共用 → 發佈到網路」拿到各分頁的 CSV 網址，填在這裡會優先使用
-    csvUrls: { players: '', games: '', atbats: '' },
+    // 若你用「檔案 → 共用 → 發佈到網路」拿到分頁的 CSV 網址，填在這裡會優先使用
+    csvUrls: { totals: '', players: '', games: '', atbats: '' },
 
-    // 排行榜規定打席 = 團隊場次 × 這個係數（向上取整）
+    // 排行榜規定打席 = 團隊場次 × 這個係數（向上取整），用於逐打席模式
     qualifyingPAPerGame: 2,
+
+    // 累計成績模式沒有打席數，改用打數當排行門檻
+    qualifyingAB: 20,
 
     // 「近況」看最後幾場
     recentGames: 5

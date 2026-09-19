@@ -175,6 +175,60 @@
     return derive(accumulate(atbats));
   }
 
+  /**
+   * 由「球季累計成績」表建立成績物件。
+   *
+   * 這種表只有加總後的數字，沒有逐打席紀錄，所以有些欄位算不出來：
+   *  - 打席、得分、盜壘、犧牲打、觸身球都不在表上 → 留 null，顯示為 "-"
+   *  - 上壘率無法重算（缺觸身與犧飛），一律沿用表上的值
+   *  - 打擊率與長打率可以由安打數／壘打數重算，表上的值只在缺欄位時當備援
+   *
+   * null 和 0 是不同的意思：null = 這份資料沒有這項，0 = 真的是 0。
+   */
+  function deriveFromTotals(c) {
+    const int = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
+    const flt = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+    const AB = int(c.AB);
+    const h1 = int(c['1B']), h2 = int(c['2B']), h3 = int(c['3B']), hr = int(c.HR);
+    const partsSum = h1 + h2 + h3 + hr;
+    const H = c.H === undefined || c.H === '' ? partsSum : int(c.H);
+    const TB = h1 + 2 * h2 + 3 * h3 + 4 * hr;
+
+    const AVG = AB > 0 ? H / AB : flt(c.AVG);
+    const SLG = AB > 0 ? TB / AB : flt(c.SLG);
+    const OBP = flt(c.OBP);
+
+    return {
+      PA: null, AB: AB, H: H,
+      '1B': h1, '2B': h2, '3B': h3, HR: hr, TB: TB,
+      BB: int(c.BB), IBB: 0, HBP: null, K: int(c.K),
+      SF: null, SH: null, E: null, DP: null, CI: null,
+      RBI: int(c.RBI), R: null, SB: null, CS: null,
+      RISP_AB: 0, RISP_H: 0, games: null, unknown: 0,
+      XBH: h2 + h3 + hr,
+      TOB: null,
+      AVG: AVG, OBP: OBP, SLG: SLG,
+      OPS: (OBP === null || SLG === null) ? null : OBP + SLG,
+      ISO: (SLG === null || AVG === null) ? null : SLG - AVG,
+      BBpct: null, Kpct: null, BABIP: null, RISP_AVG: null, RBIperG: null
+    };
+  }
+
+  /** 把多筆累計成績加起來（給「合計」列用）。率值一律重算，不是取平均。 */
+  function sumTotals(list) {
+    const acc = { AB: 0, '1B': 0, '2B': 0, '3B': 0, HR: 0, H: 0, BB: 0, K: 0, RBI: 0 };
+    list.forEach(t => {
+      acc.AB += t.AB; acc['1B'] += t['1B']; acc['2B'] += t['2B']; acc['3B'] += t['3B'];
+      acc.HR += t.HR; acc.H += t.H; acc.BB += t.BB; acc.K += t.K; acc.RBI += t.RBI;
+    });
+    const out = deriveFromTotals(acc);
+    // 團隊上壘率沒辦法由各人的上壘率加總還原，只能留白
+    out.OBP = null;
+    out.OPS = null;
+    return out;
+  }
+
   /* ------------------------------------------------------------------ *
    * 分組
    * ------------------------------------------------------------------ */
@@ -244,15 +298,15 @@
     { key: 'H',     label: '安打',     format: 'int',   dir: 'desc', qualified: false },
     { key: 'HR',    label: '全壘打',   format: 'int',   dir: 'desc', qualified: false },
     { key: 'RBI',   label: '打點',     format: 'int',   dir: 'desc', qualified: false },
-    { key: 'R',     label: '得分',     format: 'int',   dir: 'desc', qualified: false },
+    { key: 'R',     label: '得分',     format: 'int',   dir: 'desc', qualified: false, needsAtbats: true },
     { key: 'XBH',   label: '長打',     format: 'int',   dir: 'desc', qualified: false },
     { key: 'TB',    label: '壘打數',   format: 'int',   dir: 'desc', qualified: false },
-    { key: 'SB',    label: '盜壘',     format: 'int',   dir: 'desc', qualified: false },
+    { key: 'SB',    label: '盜壘',     format: 'int',   dir: 'desc', qualified: false, needsAtbats: true },
     { key: 'BB',    label: '四壞',     format: 'int',   dir: 'desc', qualified: false },
     { key: 'ISO',   label: '純長打率', format: 'rate3', dir: 'desc', qualified: true },
-    { key: 'BBpct', label: '四壞率',   format: 'pct1',  dir: 'desc', qualified: true },
-    { key: 'Kpct',  label: '三振率',   format: 'pct1',  dir: 'asc',  qualified: true },
-    { key: 'RISP_AVG', label: '得點圈打擊率', format: 'rate3', dir: 'desc', qualified: false }
+    { key: 'BBpct', label: '四壞率',   format: 'pct1',  dir: 'desc', qualified: true, needsAtbats: true },
+    { key: 'Kpct',  label: '三振率',   format: 'pct1',  dir: 'asc',  qualified: true, needsAtbats: true },
+    { key: 'RISP_AVG', label: '得點圈打擊率', format: 'rate3', dir: 'desc', qualified: false, needsAtbats: true }
   ];
 
   /**
@@ -265,12 +319,13 @@
     const o = opts || {};
     const cat = CATEGORIES.find(c => c.key === key) || { dir: 'desc', qualified: false };
     const dir = o.dir || cat.dir;
-    const minPA = cat.qualified ? (o.minPA || 0) : 0;
+    const qualifyKey = o.qualifyKey || 'PA';
+    const minQualify = cat.qualified ? (o.minPA || 0) : 0;
 
     const pool = rows.filter(r => {
       const v = r.stats[key];
       if (v === null || v === undefined || Number.isNaN(v)) return false;
-      if (r.stats.PA < minPA) return false;
+      if (minQualify > 0 && !(r.stats[qualifyKey] >= minQualify)) return false;
       // 累計類項目為 0 的不必占榜位
       if (!cat.qualified && v === 0) return false;
       return true;
@@ -279,8 +334,9 @@
     pool.sort((a, b) => {
       const d = dir === 'asc' ? a.stats[key] - b.stats[key] : b.stats[key] - a.stats[key];
       if (d !== 0) return d;
-      // 同分：打席多的在前，再比姓名，讓排序穩定
-      if (b.stats.PA !== a.stats.PA) return b.stats.PA - a.stats.PA;
+      // 同分：打席（或打數）多的在前，再比姓名，讓排序穩定
+      const av = a.stats[qualifyKey] || 0, bv = b.stats[qualifyKey] || 0;
+      if (bv !== av) return bv - av;
       return String(a.player && a.player.name).localeCompare(String(b.player && b.player.name), 'zh-Hant');
     });
 
@@ -341,6 +397,7 @@
   return {
     OUTCOMES, ALIASES, CATEGORIES,
     normalizeOutcome, emptyTotals, accumulate, derive, summarize,
+    deriveFromTotals, sumTotals,
     groupBy, progression, recentForm,
     rank, qualifyingPA, ratio,
     format, fmtRate3, fmtPct1, fmtInt, fmtNum2

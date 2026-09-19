@@ -106,6 +106,16 @@
     U.clear(main);
     setActiveNav(route.nav);
 
+    // 累計成績來源缺逐場／逐打席資料，先說明哪些頁面會是空的
+    if (season.granularity === 'totals' && (route.view === 'overview' || route.view === 'games' || route.view === 'record')) {
+      main.appendChild(U.banner(el('span', {}, [
+        el('strong', { text: '目前讀的是球季累計成績。' }),
+        ' 這種資料只有加總後的數字，沒有逐場與逐打席紀錄，所以比賽列表、走勢圖、得分與盜壘都是空的。',
+        '要讓這些功能有資料，從下一場開始用',
+        el('a', { href: '#/record' }, '「記錄」頁'),
+        '逐打席輸入即可。'
+      ])));
+    }
     // 示範資料要在每一頁講清楚，否則隊名配上假數字很容易被當成真的成績
     if (season.source.mode === 'demo' && route.view !== 'settings') {
       main.appendChild(U.banner(el('span', {}, [

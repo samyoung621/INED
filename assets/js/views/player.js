@@ -17,27 +17,48 @@ window.SBViews.player = function (season, params) {
   const p = row.player;
   const t = row.stats;
 
-  frag.appendChild(el('div', { class: 'page-head' }, [
-    el('h1', {}, [
-      p.name,
-      el('span', { class: 'muted', style: 'font-weight:450;font-size:16px;margin-left:10px' },
-        (p.number ? '#' + p.number : '') + (p.position ? '　' + p.position : '') + (p.hand ? '　' + p.hand + '打' : ''))
-    ]),
-    el('p', {}, [
-      t.games + ' 場出賽 · ' + t.PA + ' 個打席',
-      !p.active ? el('span', { class: 'badge', style: 'margin-left:8px' }, p.status) : null,
-      p.ghost ? el('span', { class: 'badge', style: 'margin-left:8px' }, '球員名單未登記') : null
+  const totalsMode = season.granularity === 'totals';
+
+  const photo = p.photo
+    ? el('img', {
+        class: 'player-photo', src: p.photo, alt: p.name + ' 的照片', loading: 'lazy',
+        onerror: e => { e.target.remove(); }     // 照片連結失效就不要留破圖
+      })
+    : null;
+
+  frag.appendChild(el('div', { class: 'page-head player-head' }, [
+    photo,
+    el('div', {}, [
+      el('h1', {}, [
+        p.name,
+        el('span', { class: 'muted', style: 'font-weight:450;font-size:16px;margin-left:10px' },
+          (p.number ? '#' + p.number : '') + (p.position ? '　' + p.position : '') + (p.hand ? '　' + p.hand + '打' : ''))
+      ]),
+      el('p', {}, [
+        totalsMode ? (t.AB + ' 個打數 · ' + t.H + ' 支安打') : (t.games + ' 場出賽 · ' + t.PA + ' 個打席'),
+        !p.active ? el('span', { class: 'badge', style: 'margin-left:8px' }, p.status) : null,
+        p.ghost ? el('span', { class: 'badge', style: 'margin-left:8px' }, '球員名單未登記') : null
+      ])
     ])
   ]));
 
-  if (t.PA === 0) {
-    frag.appendChild(U.banner('這位球員目前沒有任何打席紀錄。'));
+  if (totalsMode ? t.AB === 0 : t.PA === 0) {
+    frag.appendChild(U.banner('這位球員目前沒有任何打擊紀錄。'));
     return frag;
   }
 
   /* --------------------------------------------------------- 累計成績 */
 
-  frag.appendChild(U.tiles([
+  frag.appendChild(U.tiles(totalsMode ? [
+    { label: '打擊率', value: S.fmtRate3(t.AVG), hero: true, note: t.H + ' 安打 / ' + t.AB + ' 打數' },
+    { label: '上壘率', value: S.fmtRate3(t.OBP), note: '取自試算表' },
+    { label: '長打率', value: S.fmtRate3(t.SLG), note: t.TB + ' 壘打數' },
+    { label: 'OPS', value: S.fmtRate3(t.OPS), note: '純長打率 ' + S.fmtRate3(t.ISO) },
+    { label: '安打', value: S.fmtInt(t.H), note: '二安 ' + t['2B'] + ' · 三安 ' + t['3B'] + ' · 全打 ' + t.HR },
+    { label: '長打', value: S.fmtInt(t.XBH) },
+    { label: '打點', value: S.fmtInt(t.RBI) },
+    { label: '三振 / 四壞', value: t.K + ' / ' + t.BB }
+  ] : [
     { label: '打擊率', value: S.fmtRate3(t.AVG), hero: true, note: t.H + ' 安打 / ' + t.AB + ' 打數' },
     { label: '上壘率', value: S.fmtRate3(t.OBP), note: '上壘 ' + t.TOB + ' 次' },
     { label: '長打率', value: S.fmtRate3(t.SLG), note: t.TB + ' 壘打數' },
@@ -54,7 +75,7 @@ window.SBViews.player = function (season, params) {
   /* -------------------------------------------------------------- 近況 */
 
   const form = row.recent;
-  if (form.games) {
+  if (!totalsMode && form && form.games) {
     const f = form.stats;
     frag.appendChild(U.card(
       '近況（最近 ' + form.games + ' 場）',
@@ -88,7 +109,7 @@ window.SBViews.player = function (season, params) {
   /* ---------------------------------------------- 走勢 + 打席結果分佈 */
 
   const prog = row.progression;
-  const trend = U.card('累計打擊率走勢', '滑過看單場成績', C.lineChart({
+  const trend = totalsMode ? null : U.card('累計打擊率走勢', '滑過看單場成績', C.lineChart({
     points: prog.map(e => {
       const g = season.gameById.get(e.gameId);
       return {
@@ -108,27 +129,37 @@ window.SBViews.player = function (season, params) {
     return g === 'safe' ? '安打' : g === 'on' ? '上壘' : '出局・犧牲';
   };
   const counts = {};
-  row.atbats.forEach(pa => { if (pa.code) counts[pa.code] = (counts[pa.code] || 0) + 1; });
+  if (totalsMode) {
+    ['1B', '2B', '3B', 'HR', 'BB', 'K'].forEach(code => { if (t[code]) counts[code] = t[code]; });
+  } else {
+    row.atbats.forEach(pa => { if (pa.code) counts[pa.code] = (counts[pa.code] || 0) + 1; });
+  }
+  const denom = totalsMode ? t.AB : t.PA;
   const distItems = Object.keys(counts).map(code => ({
     label: S.OUTCOMES[code].label,
     value: counts[code],
     group: groupName(code),
-    sub: S.fmtPct1(counts[code] / t.PA) + ' 的打席'
+    sub: denom > 0 ? S.fmtPct1(counts[code] / denom) + (totalsMode ? ' 的打數' : ' 的打席') : ''
   })).sort((a, b) => b.value - a.value);
 
-  const dist = U.card('打席結果分佈', t.PA + ' 個打席', C.barChart({
+  const dist = U.card(
+    totalsMode ? '安打組成與三振四壞' : '打席結果分佈',
+    totalsMode ? t.AB + ' 個打數' : t.PA + ' 個打席',
+    C.barChart({
     items: distItems,
     groups: ['安打', '上壘', '出局・犧牲'],
     format: S.fmtInt,
     valueLabel: '次數',
-    label: p.name + '的打席結果分佈'
+    label: p.name + (totalsMode ? '的安打組成' : '的打席結果分佈')
   }));
 
-  frag.appendChild(el('div', { class: 'grid grid--2' }, [trend, dist]));
+  frag.appendChild(totalsMode
+    ? el('div', {}, dist)
+    : el('div', { class: 'grid grid--2' }, [trend, dist]));
 
   /* ---------------------------------------------------------- 逐場成績 */
 
-  frag.appendChild(U.card('逐場成績', null, U.table({
+  if (!totalsMode) frag.appendChild(U.card('逐場成績', null, U.table({
     sticky: 1,
     columns: [
       { key: 'date', label: '日期', text: true, value: e => (season.gameById.get(e.gameId) || {}).date || e.gameId,
@@ -156,8 +187,8 @@ window.SBViews.player = function (season, params) {
 
   /* ------------------------------------------------------------ 名次 */
 
-  const ranks = S.CATEGORIES.map(cat => {
-    const list = S.rank(season.rows, cat.key, { minPA: cat.qualified ? season.minPA : 0 });
+  const ranks = S.CATEGORIES.filter(c => !(totalsMode && c.needsAtbats)).map(cat => {
+    const list = S.rank(season.rows, cat.key, { minPA: cat.qualified ? season.minPA : 0, qualifyKey: season.qualifyKey });
     const me = list.find(r => String(r.player.id) === String(p.id));
     if (!me) return null;
     return {
@@ -167,7 +198,7 @@ window.SBViews.player = function (season, params) {
   }).filter(Boolean);
 
   if (ranks.length) {
-    frag.appendChild(U.card('隊內名次', '率值類項目以規定打席 ' + season.minPA + ' 為門檻', U.table({
+    frag.appendChild(U.card('隊內名次', '率值類項目以' + (totalsMode ? '規定打數 ' : '規定打席 ') + season.minPA + ' 為門檻', U.table({
       columns: [
         { key: 'label', label: '項目', text: true },
         { key: 'value', label: '成績', text: true, cls: 'col-text' },

@@ -4,6 +4,11 @@ window.SBViews.players = function (season) {
   const U = window.SBUi, S = window.SBStats, el = U.el;
   const frag = document.createDocumentFragment();
 
+  const totalsMode = season.granularity === 'totals';
+  const qualifyLabel = totalsMode ? '規定打數' : '規定打席';
+  // 累計成績來源沒有這些欄位，與其整欄顯示 "-" 不如不要出現
+  const HIDDEN_IN_TOTALS = ['games', 'PA', 'R', 'HBP', 'SB', 'Kpct', 'BBpct', 'RISP_AVG'];
+
   const state = { q: '', scope: 'active', minPA: 0 };
 
   frag.appendChild(el('div', { class: 'page-head' }, [
@@ -21,7 +26,8 @@ window.SBViews.players = function (season) {
     state.scope, v => { state.scope = v; render(); }
   ));
   controls.appendChild(U.seg(
-    [{ label: '不限打席', value: 0 }, { label: '規定打席 ' + season.minPA + '+', value: season.minPA }],
+    [{ label: totalsMode ? '不限打數' : '不限打席', value: 0 },
+     { label: qualifyLabel + ' ' + season.minPA + '+', value: season.minPA }],
     state.minPA, v => { state.minPA = v; render(); }
   ));
   const exportBtn = el('button', { class: 'btn btn--sm', type: 'button' }, '匯出 CSV');
@@ -31,9 +37,9 @@ window.SBViews.players = function (season) {
   const host = el('div');
   frag.appendChild(host);
 
-  const COLUMNS = [
+  const ALL_COLUMNS = [
     { key: 'number', label: '背號', text: true, value: r => r.player.number || r.player.id },
-    { key: 'name', label: '姓名', text: true, value: r => r.player.name, render: r => U.playerLink(r.player) },
+    { key: 'name', label: '姓名', text: true, value: r => r.player.name, render: r => U.playerLink(r.player, true) },
     { key: 'position', label: '守位', text: true, value: r => r.player.position, sortable: false },
     { key: 'games', label: '出賽', value: r => r.stats.games },
     { key: 'PA', label: '打席', value: r => r.stats.PA, title: '打席 PA' },
@@ -60,10 +66,12 @@ window.SBViews.players = function (season) {
     { key: 'RISP_AVG', label: '得點圈', value: r => r.stats.RISP_AVG, format: 'rate3', title: '得點圈打擊率（需在 Sheet 標記得點圈欄）' }
   ];
 
+  const COLUMNS = ALL_COLUMNS.filter(c => !(totalsMode && HIDDEN_IN_TOTALS.indexOf(c.key) >= 0));
+
   function filtered() {
     return season.rows.filter(r => {
       if (state.scope === 'active' && !r.player.active) return false;
-      if (r.stats.PA < state.minPA) return false;
+      if (state.minPA > 0 && !(r.stats[season.qualifyKey] >= state.minPA)) return false;
       if (state.q) {
         const hay = (r.player.name + ' ' + (r.player.number || '') + ' ' + r.player.position).toLowerCase();
         if (hay.indexOf(state.q) < 0) return false;
@@ -75,11 +83,13 @@ window.SBViews.players = function (season) {
   function render() {
     const rows = filtered();
     // 合計列：把這些球員的打席合起來重算，率值才正確
-    const union = rows.reduce((acc, r) => acc.concat(r.atbats), []);
-    const totals = S.summarize(union);
+    const totals = totalsMode
+      ? S.sumTotals(rows.map(r => r.stats))
+      : S.summarize(rows.reduce((acc, r) => acc.concat(r.atbats), []));
 
     U.clear(host);
-    host.appendChild(U.card(null, rows.length + ' 位球員 · ' + totals.PA + ' 個打席', U.table({
+    host.appendChild(U.card(null, rows.length + ' 位球員 · ' +
+      (totalsMode ? totals.AB + ' 個打數' : totals.PA + ' 個打席'), U.table({
       sticky: 2,
       sort: { key: 'OPS', dir: 'desc' },
       columns: COLUMNS,

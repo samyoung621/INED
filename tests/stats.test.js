@@ -225,3 +225,71 @@ test('分組：依球員各自算成績', () => {
   close(g.get('7').stats.AVG, 0.5, '7 號');
   close(g.get('9').stats.SLG, 4, '9 號');
 });
+
+/* ---------------------------------------------------------------- *
+ * 球季累計成績（只有加總數字、沒有逐打席紀錄的來源）
+ * ---------------------------------------------------------------- */
+
+test('累計成績：壘打數與長打由一二三壘安打重算', () => {
+  const t = S.deriveFromTotals({ AB: 83, H: 37, '1B': 30, '2B': 5, '3B': 1, HR: 1, BB: 3, K: 2, RBI: 21, OBP: 0.465 });
+  assert.equal(t.AB, 83);
+  assert.equal(t.H, 37);
+  assert.equal(t.TB, 30 + 10 + 3 + 4, '壘打數 = 30+2×5+3×1+4×1');
+  assert.equal(t.XBH, 7);
+  close(t.AVG, 37 / 83, '打擊率由安打與打數重算');
+  close(t.SLG, 47 / 83, '長打率由壘打數重算');
+});
+
+test('累計成績：上壘率沿用表上的值，因為缺觸身與犧飛無法重算', () => {
+  const t = S.deriveFromTotals({ AB: 83, H: 37, '1B': 30, '2B': 5, '3B': 1, HR: 1, BB: 3, OBP: 0.465 });
+  close(t.OBP, 0.465, '直接採用');
+  close(t.OPS, 0.465 + 47 / 83, 'OPS = 表上的上壘率 + 重算的長打率');
+  assert.equal(t.HBP, null, '觸身球不在這種表裡');
+  assert.equal(t.SF, null);
+});
+
+test('累計成績：沒有的項目是 null 而不是 0', () => {
+  const t = S.deriveFromTotals({ AB: 30, H: 10, '1B': 10, '2B': 0, '3B': 0, HR: 0, BB: 2, K: 5, RBI: 4, OBP: 0.4 });
+  ['PA', 'R', 'SB', 'CS', 'HBP', 'SF', 'SH', 'games', 'Kpct', 'BBpct', 'BABIP', 'RISP_AVG', 'TOB'].forEach(k => {
+    assert.equal(t[k], null, k + ' 應為 null');
+  });
+  assert.equal(t.K, 5, '三振有資料就是數字');
+  assert.equal(t.BB, 2);
+});
+
+test('累計成績：缺安打數欄位時由一二三壘安打推回去', () => {
+  const t = S.deriveFromTotals({ AB: 20, '1B': 4, '2B': 2, '3B': 1, HR: 1 });
+  assert.equal(t.H, 8);
+});
+
+test('累計成績合計：率值重算，不是各人平均', () => {
+  const a = S.deriveFromTotals({ AB: 10, H: 5, '1B': 5, '2B': 0, '3B': 0, HR: 0, BB: 1, K: 1, RBI: 2, OBP: 0.5 });
+  const b = S.deriveFromTotals({ AB: 90, H: 18, '1B': 18, '2B': 0, '3B': 0, HR: 0, BB: 9, K: 9, RBI: 3, OBP: 0.3 });
+  const t = S.sumTotals([a, b]);
+  assert.equal(t.AB, 100);
+  assert.equal(t.H, 23);
+  close(t.AVG, 23 / 100, '合計打擊率 = 總安打/總打數，不是 (.500+.200)/2');
+  assert.equal(t.BB, 10);
+  assert.equal(t.RBI, 5);
+  assert.equal(t.OBP, null, '各人的上壘率加不回團隊上壘率，只能留白');
+  assert.equal(t.OPS, null);
+});
+
+test('排行榜門檻欄位可改成打數', () => {
+  const mk = (name, ab, h) => ({
+    player: { name: name },
+    stats: S.deriveFromTotals({ AB: ab, H: h, '1B': h, '2B': 0, '3B': 0, HR: 0, OBP: 0.4 })
+  });
+  const rows = [mk('少打數高打率', 5, 4), mk('甲', 50, 20), mk('乙', 40, 12)];
+  const top = S.rank(rows, 'AVG', { minPA: 20, qualifyKey: 'AB' });
+  assert.deepEqual(top.map(r => r.player.name), ['甲', '乙'], '打數不足的被排除');
+
+  // 用預設的 PA 當門檻會把所有人濾掉，因為這種資料沒有打席
+  const byPA = S.rank(rows, 'AVG', { minPA: 20 });
+  assert.equal(byPA.length, 0, 'PA 是 null，門檻一律不通過');
+});
+
+test('需要逐打席資料的排行項目有標記', () => {
+  const needs = S.CATEGORIES.filter(c => c.needsAtbats).map(c => c.key);
+  assert.deepEqual(needs.sort(), ['BBpct', 'Kpct', 'RISP_AVG', 'R', 'SB'].sort());
+});

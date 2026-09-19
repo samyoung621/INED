@@ -216,9 +216,17 @@ window.SBUi = (function () {
     return el('span', { class: 'badge' + (kind ? ' badge--' + kind : ''), text: label });
   }
 
-  /** 把球員姓名做成連結 */
-  function playerLink(player) {
-    return el('a', { href: '#/player/' + encodeURIComponent(player.id) }, player.name);
+  /** 把球員姓名做成連結；有照片就帶一個小頭像 */
+  function playerLink(player, withPhoto) {
+    const link = el('a', { href: '#/player/' + encodeURIComponent(player.id) });
+    if (withPhoto && player.photo) {
+      link.appendChild(el('img', {
+        class: 'player-thumb', src: player.photo, alt: '', loading: 'lazy',
+        onerror: e => { e.target.remove(); }
+      }));
+    }
+    link.appendChild(document.createTextNode(player.name));
+    return link;
   }
 
   function gameLabel(game) {
