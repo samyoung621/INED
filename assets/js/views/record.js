@@ -15,7 +15,16 @@ window.SBViews.record = (function () {
   function read(key) {
     try { return JSON.parse(localStorage.getItem(key) || '[]') || []; } catch (e) { return []; }
   }
-  function write(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+  function write(key, val) {
+    // 無痕視窗、封鎖第三方儲存、容量滿了都會丟例外，不能讓它中斷記錄流程
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+      return true;
+    } catch (e) {
+      console.warn('無法寫入瀏覽器儲存空間', e);
+      return false;
+    }
+  }
 
   return function (season) {
     const U = window.SBUi, S = window.SBStats, el = U.el;

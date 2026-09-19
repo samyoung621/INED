@@ -48,11 +48,17 @@ window.SBConfig = (function () {
     Object.keys(cfg).forEach(k => {
       if (JSON.stringify(cfg[k]) !== JSON.stringify(DEFAULTS[k])) diff[k] = cfg[k];
     });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(diff));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(diff));
+    } catch (e) {
+      console.warn('無法儲存設定', e);
+    }
     return cfg;
   }
 
-  function reset() { localStorage.removeItem(STORAGE_KEY); }
+  function reset() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
 
   return { DEFAULTS, load, save, reset, STORAGE_KEY };
 })();
