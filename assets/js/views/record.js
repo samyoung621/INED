@@ -423,9 +423,8 @@ window.SBViews.record = (function () {
       U.clear(host);
       if (season.source.mode === 'demo') {
         host.appendChild(U.banner(el('span', {}, [
-          '目前顯示的是示範資料。記錄功能照樣可用，匯出的 CSV 貼到你自己的 Sheet 就行；',
-          el('a', { href: '#/settings' }, '到設定頁接上 Google Sheet'),
-          '之後，這裡的球員名單與比賽就會換成你們球隊的。'
+          '下面的球員名單與比賽是示範用的。記錄功能本身照樣可用，',
+          '匯出的 CSV 貼到你自己的 Sheet 就行。'
         ])));
       }
       host.appendChild(inputCard());

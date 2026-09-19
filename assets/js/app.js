@@ -106,6 +106,15 @@
     U.clear(main);
     setActiveNav(route.nav);
 
+    // 示範資料要在每一頁講清楚，否則隊名配上假數字很容易被當成真的成績
+    if (season.source.mode === 'demo' && route.view !== 'settings') {
+      main.appendChild(U.banner(el('span', {}, [
+        el('strong', { text: '這是示範資料，不是你們球隊的紀錄。' }),
+        ' 底下的球員、比賽與成績都是為了展示版面而產生的假資料。',
+        el('a', { href: '#/settings' }, '到設定頁接上你們的 Google Sheet'),
+        '，這裡就會換成真實紀錄。'
+      ])));
+    }
     if (season.loadError && route.view !== 'settings') {
       main.appendChild(U.banner(el('span', {}, [
         season.loadError + ' ',
